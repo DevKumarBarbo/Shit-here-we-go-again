@@ -1,12 +1,13 @@
-{
-      "name": "nif-bot",
-        "version": "1.0.0",
-          "main": "bot.js",
-            "scripts": {
-                "start": "node bot.js"
-                  },
-                    "dependencies": {
-                        "discord.js": "^14.0.0",
-                            "axios": "^1.6.0"
-                              }
-                              }
+ {
+                                  "name": "nif-bot",
+                                    "version": "1.0.0",
+                                      "main": "bot.js",
+                                        "scripts": {
+                                            "start": "node bot.js"
+                                              },
+                                                "dependencies": {
+                                                    "discord.js": "^14.0.0",
+                                                        "puppeteer": "^21.0.0"
+                                                          }
+                                                          }
+                              
