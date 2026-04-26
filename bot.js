@@ -1,9 +1,173 @@
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
-const CONFIG = { DISCORD_TOKEN: process.env.DISCORD_TOKEN, NEWS_CHANNEL_ID: process.env.NEWS_CHANNEL_ID, RAPIDAPI_KEY: process.env.RAPIDAPI_KEY, WATCH_ACCOUNTS: [{ handle: 'elonmusk' }, { handle: 'OpenAI' }, { handle: 'NASA' }], POLL_INTERVAL_MS: 60 * 1000 };
-const discord = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
+
+const CONFIG = {
+  DISCORD_TOKEN: process.env.DISCORD_TOKEN,
+  NEWS_CHANNEL_ID: process.env.NEWS_CHANNEL_ID,
+  RAPIDAPI_KEY: process.env.RAPIDAPI_KEY,
+
+  WATCH_ACCOUNTS: [
+    { handle: "elonmusk", user_id: "44196397" },
+    { handle: "OpenAI", user_id: "972651467338199041" },
+    { handle: "NASA", user_id: "11348282" },
+  ],
+
+  POLL_INTERVAL_MS: 60 * 1000,
+};
+
+const discord = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+});
+
 const seenIds = {};
-const userIds = {};
-async function getUserId(handle) { const r = await fetch('https://twitter-x.p.rapidapi.com/user/details?username=' + handle, { headers: { 'x-rapidapi-host': 'twitter-x.p.rapidapi.com', 'x-rapidapi-key': CONFIG.RAPIDAPI_KEY } }); const d = await r.json(); console.log('[' + handle + '] details:', JSON.stringify(d).slice(0,200)); return d?.data?.user?.result?.rest_id || null; }
-function buildEmbed(t, handle) { const e = new EmbedBuilder().setColor(0x000000).setAuthor({ name: '@' + handle, url: 'https://x.com/' + handle }).setDescription(t.text.slice(0,4096)).setURL('https://x.com/' + handle + '/status/' + t.id).setTimestamp(new Date(t.created_at)).setFooter({ text: 'X Post' }).addFields({ name: 'Engagement', value: '❤️ ' + fmt(t.likes) + '  🔁 ' + fmt(t.retweets) + '  💬 ' + fmt(t.replies) }); if (t.media) e.setImage(t.media); return e; }
-discord.on('error', e => console.error(e));
+
+async function fetchTweets(user_id, handle) {
+  const url = `https://twitter-x.p.rapidapi.com/user/tweets?user_id=${user_id}&limit=10`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "x-rapidapi-host": "twitter-x.p.rapidapi.com",
+      "x-rapidapi-key": CONFIG.RAPIDAPI_KEY,
+    },
+  });
+
+  if (!res.ok) {
+    console.error(`[${handle}] API error: HTTP ${res.status}`);
+    return [];
+  }
+
+  const data = await res.json();
+
+  // LOG the raw structure so we can see what shape the data is
+  console.log(`[${handle}] Raw keys:`, JSON.stringify(Object.keys(data)));
+
+  // Try multiple possible response shapes
+  let tweets = [];
+
+  // Shape 1: data.data.user.result.timeline...
+  try {
+    const entries =
+      data?.data?.user?.result?.timeline_v2?.timeline?.instructions?.find(
+        (i) => i.type === "TimelineAddEntries"
+      )?.entries || [];
+
+    tweets = entries
+      .filter((e) => e.content?.entryType === "TimelineTimelineItem")
+      .map((e) => {
+        const result = e.content?.itemContent?.tweet_results?.result;
+        const legacy = result?.legacy;
+        if (!legacy) return null;
+        return {
+          id: legacy.id_str,
+          text: legacy.full_text,
+          created_at: legacy.created_at,
+          likes: legacy.favorite_count || 0,
+          retweets: legacy.retweet_count || 0,
+          replies: legacy.reply_count || 0,
+          media: legacy.entities?.media?.[0]?.media_url_https || null,
+          is_retweet: legacy.full_text?.startsWith("RT @"),
+        };
+      })
+      .filter(Boolean);
+
+    console.log(`[${handle}] Shape1 found ${tweets.length} tweets`);
+  } catch (e) {
+    console.log(`[${handle}] Shape1 failed:`, e.message);
+  }
+
+  // Shape 2: flat array at data.results or data.tweets
+  if (tweets.length === 0) {
+    try {
+      const flat = data?.results || data?.tweets || data?.data || [];
+      if (Array.isArray(flat) && flat.length > 0) {
+        tweets = flat.map((t) => ({
+          id: t.id || t.id_str || t.tweet_id,
+          text: t.text || t.full_text || t.tweet,
+          created_at: t.created_at || t.date || new Date().toISOString(),
+          likes: t.favorite_count || t.likes || 0,
+          retweets: t.retweet_count || t.retweets || 0,
+          replies: t.reply_count || t.replies || 0,
+          media: t.media?.[0]?.url || t.entities?.media?.[0]?.media_url_https || null,
+          is_retweet: (t.text || t.full_text || "").startsWith("RT @"),
+        })).filter((t) => t.id && t.text);
+        console.log(`[${handle}] Shape2 found ${tweets.length} tweets`);
+      }
+    } catch (e) {
+      console.log(`[${handle}] Shape2 failed:`, e.message);
+    }
+  }
+
+  // If still nothing, log first 500 chars of raw response to debug
+  if (tweets.length === 0) {
+    console.log(`[${handle}] No tweets found. Raw sample:`, JSON.stringify(data).slice(0, 500));
+  }
+
+  return tweets;
+}
+
+function buildEmbed(tweet, handle) {
+  const tweetUrl = `https://x.com/${handle}/status/${tweet.id}`;
+  const embed = new EmbedBuilder()
+    .setColor(0x000000)
+    .setAuthor({ name: `@${handle}`, url: `https://x.com/${handle}` })
+    .setDescription(tweet.text.length > 4096 ? tweet.text.slice(0, 4093) + "..." : tweet.text)
+    .setURL(tweetUrl)
+    .setTimestamp(new Date(tweet.created_at))
+    .setFooter({ text: `𝕏 Post · @${handle}` })
+    .addFields({ name: "Engagement", value: `❤️ ${fmt(tweet.likes)}  🔁 ${fmt(tweet.retweets)}  💬 ${fmt(tweet.replies)}` });
+  if (tweet.media) embed.setImage(tweet.media);
+  return embed;
+}
+
+function fmt(n) {
+  if (!n) return "0";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
+async function fetchAndPost(channel, account) {
+  try {
+    const tweets = await fetchTweets(account.user_id, account.handle);
+    if (!tweets || tweets.length === 0) return;
+
+    if (!seenIds[account.handle]) {
+      seenIds[account.handle] = new Set(tweets.map((t) => t.id));
+      console.log(`[${account.handle}] Seeded ${seenIds[account.handle].size} tweet IDs`);
+      return;
+    }
+
+    const newTweets = tweets.filter((t) => !seenIds[account.handle].has(t.id));
+    console.log(`[${account.handle}] ${newTweets.length} new tweets found`);
+
+    for (const tweet of [...newTweets].reverse()) {
+      if (tweet.is_retweet) { console.log(`[${account.handle}] Skipping retweet`); continue; }
+      await channel.send({ embeds: [buildEmbed(tweet, account.handle)] });
+      seenIds[account.handle].add(tweet.id);
+      console.log(`[${account.handle}] ✅ Posted: ${tweet.text.slice(0, 60)}`);
+    }
+  } catch (err) {
+    console.error(`[${account.handle}] Error: ${err.message}`);
+  }
+}
+
+discord.once("clientReady", async () => {
+  console.log(`✅ Bot online: ${discord.user.tag}`);
+  const channel = await discord.channels.fetch(CONFIG.NEWS_CHANNEL_ID).catch(() => null);
+  if (!channel) { console.error("❌ Channel not found"); process.exit(1); }
+  console.log(`📡 Watching: ${CONFIG.WATCH_ACCOUNTS.map((a) => "@" + a.handle).join(", ")}`);
+  console.log(`⏱️  Polling every ${CONFIG.POLL_INTERVAL_MS / 1000}s`);
+
+  for (const account of CONFIG.WATCH_ACCOUNTS) {
+    await fetchAndPost(channel, account);
+  }
+
+  setInterval(async () => {
+    for (const account of CONFIG.WATCH_ACCOUNTS) {
+      await fetchAndPost(channel, account);
+    }
+  }, CONFIG.POLL_INTERVAL_MS);
+});
+
+discord.on("error", (err) => console.error("Discord error:", err));
 discord.login(CONFIG.DISCORD_TOKEN);
