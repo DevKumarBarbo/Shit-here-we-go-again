@@ -1,10 +1,10 @@
 const { Client, GatewayIntentBits } = require("discord.js");
-const puppeteer = require("puppeteer-core");
+const axios = require("axios");
 
 const TOKEN = process.env.TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 
-const ACCOUNTS = ["elonmusk"]; // add more usernames if needed
+const ACCOUNTS = ["elonmusk"];
 
 let seen = new Set();
 
@@ -12,113 +12,61 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
   });
 
-  async function scrape(page, username) {
-    await page.goto(`https://x.com/${username}`, {
-        waitUntil: "networkidle2"
-          });
+  async function getTweets(username) {
+    try {
+        const res = await axios.get(`https://cdn.syndication.twimg.com/widgets/timelines/profile?screen_name=${username}`);
+            return res.data.globalObjects.tweets;
+              } catch (e) {
+                  console.log("Fetch error:", e.message);
+                      return {};
+                        }
+                        }
 
-            await page.waitForSelector("article");
+                        async function send(channel, tweet, username) {
+                          const embed = {
+                              author: {
+                                    name: `@${username}`,
+                                          url: `https://x.com/${username}/status/${tweet.id_str}`
+                                              },
+                                                  description: tweet.full_text,
+                                                      url: `https://x.com/${username}/status/${tweet.id_str}`,
+                                                          color: 0x000000,
+                                                              timestamp: new Date(tweet.created_at)
+                                                                };
 
-              return await page.evaluate(() => {
-                  const articles = document.querySelectorAll("article");
+                                                                  if (tweet.entities.media && tweet.entities.media.length > 0) {
+                                                                      embed.image = { url: tweet.entities.media[0].media_url_https };
+                                                                        }
 
-                      return Array.from(articles).map(a => {
-                            const text = a.innerText;
+                                                                          await channel.send({ embeds: [embed] });
+                                                                          }
 
-                                  const linkEl = a.querySelector("a[href*='/status/']");
-                                        const url = linkEl ? linkEl.href : null;
+                                                                          async function startBot() {
+                                                                            const channel = await client.channels.fetch(CHANNEL_ID);
 
-                                              const images = Array.from(a.querySelectorAll("img"))
-                                                      .map(i => i.src)
-                                                              .filter(src => src.includes("media"));
+                                                                              console.log("Bot started...");
 
-                                                                    const videos = Array.from(a.querySelectorAll("video"))
-                                                                            .map(v => v.src)
-                                                                                    .filter(Boolean);
+                                                                                while (true) {
+                                                                                    for (const user of ACCOUNTS) {
+                                                                                          const tweets = await getTweets(user);
 
-                                                                                          return { text, url, images, videos };
-                                                                                              });
-                                                                                                });
-                                                                                                }
+                                                                                                for (const id in tweets) {
+                                                                                                        if (seen.has(id)) continue;
 
-                                                                                                async function send(channel, tweet, username) {
-                                                                                                  try {
-                                                                                                      const embed = {
-                                                                                                            author: {
-                                                                                                                    name: `@${username}`,
-                                                                                                                            url: tweet.url
-                                                                                                                                  },
-                                                                                                                                        description: tweet.text.substring(0, 4000),
-                                                                                                                                              url: tweet.url,
-                                                                                                                                                    color: 0x000000,
-                                                                                                                                                          timestamp: new Date()
-                                                                                                                                                              };
+                                                                                                                seen.add(id);
 
-                                                                                                                                                                  if (tweet.images.length > 0) {
-                                                                                                                                                                        embed.image = { url: tweet.images[0] };
-                                                                                                                                                                            }
+                                                                                                                        console.log("New tweet:", id);
+                                                                                                                                await send(channel, tweets[id], user);
+                                                                                                                                      }
+                                                                                                                                          }
 
-                                                                                                                                                                                if (tweet.videos.length > 0) {
-                                                                                                                                                                                      embed.fields = [
-                                                                                                                                                                                              {
-                                                                                                                                                                                                        name: "Video",
-                                                                                                                                                                                                                  value: tweet.videos[0]
-                                                                                                                                                                                                                          }
-                                                                                                                                                                                                                                ];
-                                                                                                                                                                                                                                    }
+                                                                                                                                              await new Promise(r => setTimeout(r, 5000));
+                                                                                                                                                }
+                                                                                                                                                }
 
-                                                                                                                                                                                                                                        await channel.send({ embeds: [embed] });
+                                                                                                                                                client.once("ready", () => {
+                                                                                                                                                  console.log(`Logged in as ${client.user.tag}`);
+                                                                                                                                                    startBot();
+                                                                                                                                                    });
 
-                                                                                                                                                                                                                                            for (let i = 1; i < tweet.images.length; i++) {
-                                                                                                                                                                                                                                                  await channel.send({
-                                                                                                                                                                                                                                                          embeds: [{ image: { url: tweet.images[i] } }]
-                                                                                                                                                                                                                                                                });
-                                                                                                                                                                                                                                                                    }
-
-                                                                                                                                                                                                                                                                      } catch (err) {
-                                                                                                                                                                                                                                                                          console.log("Send error:", err.message);
-                                                                                                                                                                                                                                                                            }
-                                                                                                                                                                                                                                                                            }
-
-                                                                                                                                                                                                                                                                            async function startBot() {
-                                                                                                                                                                                                                                                                              const browser = await puppeteer.launch({
-                                                                                                                                                                                                                                                                                  executablePath: "/usr/bin/chromium-browser",
-                                                                                                                                                                                                                                                                                      headless: true,
-                                                                                                                                                                                                                                                                                          args: ["--no-sandbox", "--disable-setuid-sandbox"]
-                                                                                                                                                                                                                                                                                            });
-
-                                                                                                                                                                                                                                                                                              const page = await browser.newPage();
-
-                                                                                                                                                                                                                                                                                                const channel = await client.channels.fetch(CHANNEL_ID);
-
-                                                                                                                                                                                                                                                                                                  if (!channel) {
-                                                                                                                                                                                                                                                                                                      console.log("Channel not found");
-                                                                                                                                                                                                                                                                                                          return;
-                                                                                                                                                                                                                                                                                                            }
-
-                                                                                                                                                                                                                                                                                                              console.log("Bot started...");
-
-                                                                                                                                                                                                                                                                                                                while (true) {
-                                                                                                                                                                                                                                                                                                                    for (const user of ACCOUNTS) {
-                                                                                                                                                                                                                                                                                                                          const tweets = await scrape(page, user);
-
-                                                                                                                                                                                                                                                                                                                                for (const t of tweets) {
-                                                                                                                                                                                                                                                                                                                                        if (!t.url || seen.has(t.url)) continue;
-
-                                                                                                                                                                                                                                                                                                                                                seen.add(t.url);
-
-                                                                                                                                                                                                                                                                                                                                                        console.log("New tweet:", t.url);
-                                                                                                                                                                                                                                                                                                                                                                await send(channel, t, user);
-                                                                                                                                                                                                                                                                                                                                                                      }
-                                                                                                                                                                                                                                                                                                                                                                          }
-
-                                                                                                                                                                                                                                                                                                                                                                              await new Promise(r => setTimeout(r, 4000));
-                                                                                                                                                                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                                                                                                                                                                                }
-
-                                                                                                                                                                                                                                                                                                                                                                                client.once("ready", () => {
-                                                                                                                                                                                                                                                                                                                                                                                  console.log(`Logged in as ${client.user.tag}`);
-                                                                                                                                                                                                                                                                                                                                                                                    startBot();
-                                                                                                                                                                                                                                                                                                                                                                                    });
-
-                                                                                                                                                                                                                                                                                                                                                                                    client.login(TOKEN);const
+                                                                                                                                                    client.login(TOKEN);

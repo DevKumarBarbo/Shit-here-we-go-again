@@ -7,6 +7,6 @@
                   },
                     "dependencies": {
                         "discord.js": "^14.0.0",
-                            "puppeteer-core": "^21.0.0"
+                            "axios": "^1.6.0"
                               }
                               }
