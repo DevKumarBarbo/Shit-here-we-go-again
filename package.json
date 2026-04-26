@@ -1,12 +1,12 @@
 {
-      "name": "pro-twitter-bot",
+      "name": "x-discord-bot",
         "version": "1.0.0",
           "main": "bot.js",
             "scripts": {
                 "start": "node bot.js"
                   },
                     "dependencies": {
-                          "discord.js": "^14.0.0",
-                            "puppeteer": "^24.15.0"
-                            }
-                    }
+                        "discord.js": "^14.15.3",
+                            "rss-parser": "^3.13.0"
+                              }
+                              }

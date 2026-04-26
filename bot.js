@@ -1,109 +1,143 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
-const puppeteer = require("puppeteer");
+const Parser = require("rss-parser");
 
-const TOKEN = process.env.TOKEN;
-const CHANNEL_ID = process.env.CHANNEL_ID;
+// ─────────────────────────────────────────────
+//  CONFIG  –  only edit this section
+// ─────────────────────────────────────────────
+const CONFIG = {
+  DISCORD_TOKEN: process.env.DISCORD_TOKEN,
+    NEWS_CHANNEL_ID: process.env.NEWS_CHANNEL_ID,
 
-const ACCOUNTS = ["elonmusk"]; // add more
+      // Add or remove accounts here (without @)
+        WATCH_ACCOUNTS: ["HINDU_KlNG", "OpenAI", "NASA"],
 
-const seen = new Set();
+          // 30 seconds — fastest safe speed
+            POLL_INTERVAL_MS: 30 * 1000,
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
-  });
+              // RSSHub public instance
+                RSSHUB_BASE: "https://rsshub.app",
+                };
+                // ─────────────────────────────────────────────
 
-  async function scrapeTweets(page, username) {
-    await page.goto(`https://x.com/${username}`, {
-        waitUntil: "networkidle2"
-          });
+                const discord = new Client({
+                  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+                  });
 
-            await page.waitForSelector("article");
+                  const parser = new Parser({
+                    customFields: {
+                        item: [["media:content", "mediaContent", { keepArray: false }]],
+                          },
+                            timeout: 10000,
+                              headers: {
+                                  "User-Agent": "Mozilla/5.0 (compatible; DiscordBot/1.0)",
+                                    },
+                                    });
 
-              const tweets = await page.evaluate(() => {
-                  const articles = document.querySelectorAll("article");
+                                    const seenGuids = {};
 
-                      return Array.from(articles).map(a => {
-                            const text = a.innerText;
+                                    // ── helpers ──────────────────────────────────
 
-                                  const linkEl = a.querySelector("a[href*='/status/']");
-                                        const url = linkEl ? linkEl.href : null;
+                                    function getRssUrl(handle) {
+                                      return `${CONFIG.RSSHUB_BASE}/twitter/user/${handle}`;
+                                      }
 
-                                              const images = Array.from(a.querySelectorAll("img"))
-                                                      .map(i => i.src)
-                                                              .filter(src => src.includes("media"));
+                                      function stripHtml(html) {
+                                        return html
+                                            .replace(/<br\s*\/?>/gi, "\n")
+                                                .replace(/<[^>]+>/g, "")
+                                                    .replace(/&amp;/g, "&")
+                                                        .replace(/&lt;/g, "<")
+                                                            .replace(/&gt;/g, ">")
+                                                                .replace(/&quot;/g, '"')
+                                                                    .replace(/&#39;/g, "'")
+                                                                        .replace(/&nbsp;/g, " ")
+                                                                            .trim();
+                                                                            }
 
-                                                                    const videos = Array.from(a.querySelectorAll("video"))
-                                                                            .map(v => v.src)
-                                                                                    .filter(Boolean);
+                                                                            function extractImage(item) {
+                                                                              if (item.mediaContent?.$.url) return item.mediaContent.$.url;
+                                                                                if (item.enclosure?.url) return item.enclosure.url;
+                                                                                  const match = item.content?.match(/<img[^>]+src=["']([^"']+)["']/i);
+                                                                                    if (match) return match[1];
+                                                                                      return null;
+                                                                                      }
 
-                                                                                          return { text, url, images, videos };
-                                                                                              });
-                                                                                                });
+                                                                                      function buildEmbed(item, handle) {
+                                                                                        const fullText = stripHtml(item.content || item.contentSnippet || item.title || "");
+                                                                                          const profileUrl = `https://x.com/${handle}`;
+                                                                                            const tweetUrl = item.link || profileUrl;
+                                                                                              const imageUrl = extractImage(item);
+                                                                                                const pubDate = item.pubDate ? new Date(item.pubDate) : new Date();
+                                                                                                  const feedTitle = item.creator || `@${handle}`;
 
-                                                                                                  return tweets;
-                                                                                                  }
-
-                                                                                                  async function sendTweet(channel, tweet, username) {
                                                                                                     const embed = new EmbedBuilder()
-                                                                                                        .setAuthor({ name: `@${username}`, url: tweet.url })
-                                                                                                            .setDescription(tweet.text.slice(0, 4000))
-                                                                                                                .setURL(tweet.url)
-                                                                                                                    .setColor(0x000000)
-                                                                                                                        .setTimestamp();
+                                                                                                        .setColor(0x000000)
+                                                                                                            .setAuthor({
+                                                                                                                  name: feedTitle.includes("@") ? feedTitle : `${feedTitle} (@${handle})`,
+                                                                                                                        url: profileUrl,
+                                                                                                                            })
+                                                                                                                                .setDescription(fullText.length > 4096 ? fullText.slice(0, 4093) + "…" : fullText)
+                                                                                                                                    .setURL(tweetUrl)
+                                                                                                                                        .setTimestamp(pubDate)
+                                                                                                                                            .setFooter({ text: `𝕏 Post  ·  @${handle}` });
 
-                                                                                                                          if (tweet.images.length > 0) {
-                                                                                                                              embed.setImage(tweet.images[0]);
-                                                                                                                                }
+                                                                                                                                              if (imageUrl) embed.setImage(imageUrl);
 
-                                                                                                                                  if (tweet.videos.length > 0) {
-                                                                                                                                      embed.addFields({
-                                                                                                                                            name: "Video",
-                                                                                                                                                  value: tweet.videos[0]
-                                                                                                                                                      });
-                                                                                                                                                        }
+                                                                                                                                                return embed;
+                                                                                                                                                }
 
-                                                                                                                                                          await channel.send({ embeds: [embed] });
+                                                                                                                                                // ── core polling ──────────────────────────────
 
-                                                                                                                                                            // extra images
-                                                                                                                                                              for (let i = 1; i < tweet.images.length; i++) {
-                                                                                                                                                                  await channel.send({
-                                                                                                                                                                        embeds: [new EmbedBuilder().setImage(tweet.images[i])]
-                                                                                                                                                                            });
-                                                                                                                                                                              }
-                                                                                                                                                                              }
+                                                                                                                                                async function fetchAndPost(channel, handle) {
+                                                                                                                                                  try {
+                                                                                                                                                      const feed = await parser.parseURL(getRssUrl(handle));
+                                                                                                                                                          const items = feed.items;
+                                                                                                                                                              if (!items || items.length === 0) return;
 
-                                                                                                                                                                              async function start() {
-                                                                                                                                                                                const browser = await puppeteer.launch({
-                                                                                                                                                                                    headless: true,
-                                                                                                                                                                                        args: ["--no-sandbox", "--disable-setuid-sandbox"]
-                                                                                                                                                                                          });
+                                                                                                                                                                  // First run — just seed the seen list, don't post old tweets
+                                                                                                                                                                      if (!seenGuids[handle]) {
+                                                                                                                                                                            seenGuids[handle] = new Set(items.map((i) => i.guid || i.link));
+                                                                                                                                                                                  console.log(`[${handle}] Ready — watching for new posts`);
+                                                                                                                                                                                        return;
+                                                                                                                                                                                            }
 
-                                                                                                                                                                                            const page = await browser.newPage();
-                                                                                                                                                                                              const channel = await client.channels.fetch(CHANNEL_ID);
+                                                                                                                                                                                                const newItems = items.filter((i) => !seenGuids[handle].has(i.guid || i.link));
+                                                                                                                                                                                                    if (newItems.length === 0) return;
 
-                                                                                                                                                                                                console.log("PRO bot started 🚀");
+                                                                                                                                                                                                        for (const item of [...newItems].reverse()) {
+                                                                                                                                                                                                              await channel.send({ embeds: [buildEmbed(item, handle)] });
+                                                                                                                                                                                                                    seenGuids[handle].add(item.guid || item.link);
+                                                                                                                                                                                                                          console.log(`[${new Date().toISOString()}] ✅ @${handle}: ${item.title?.slice(0, 60)}`);
+                                                                                                                                                                                                                              }
+                                                                                                                                                                                                                                } catch (err) {
+                                                                                                                                                                                                                                    console.error(`[${handle}] ⚠️ ${err.message}`);
+                                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                                      }
 
-                                                                                                                                                                                                  while (true) {
-                                                                                                                                                                                                      for (const user of ACCOUNTS) {
-                                                                                                                                                                                                            const tweets = await scrapeTweets(page, user);
+                                                                                                                                                                                                                                      // ── startup ───────────────────────────────────
 
-                                                                                                                                                                                                                  for (const t of tweets) {
-                                                                                                                                                                                                                          if (!t.url || seen.has(t.url)) continue;
+                                                                                                                                                                                                                                      discord.once("ready", async () => {
+                                                                                                                                                                                                                                        console.log(`\n✅ Bot online: ${discord.user.tag}`);
 
-                                                                                                                                                                                                                                  seen.add(t.url);
+                                                                                                                                                                                                                                          const channel = await discord.channels.fetch(CONFIG.NEWS_CHANNEL_ID).catch(() => null);
+                                                                                                                                                                                                                                            if (!channel) {
+                                                                                                                                                                                                                                                console.error("❌ Channel not found — check NEWS_CHANNEL_ID in .env");
+                                                                                                                                                                                                                                                    process.exit(1);
+                                                                                                                                                                                                                                                      }
 
-                                                                                                                                                                                                                                          console.log("New tweet:", t.url);
-                                                                                                                                                                                                                                                  await sendTweet(channel, t, user);
-                                                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                                                            }
+                                                                                                                                                                                                                                                        console.log(`📡 Watching: ${CONFIG.WATCH_ACCOUNTS.map((h) => "@" + h).join(", ")}`);
+                                                                                                                                                                                                                                                          console.log(`⏱️  Every ${CONFIG.POLL_INTERVAL_MS / 1000}s → #${channel.name}\n`);
 
-                                                                                                                                                                                                                                                                await new Promise(r => setTimeout(r, 2000)); // fast check
+                                                                                                                                                                                                                                                            for (const handle of CONFIG.WATCH_ACCOUNTS) {
+                                                                                                                                                                                                                                                                await fetchAndPost(channel, handle);
                                                                                                                                                                                                                                                                   }
-                                                                                                                                                                                                                                                                  }
 
-                                                                                                                                                                                                                                                                  client.once("ready", () => {
-                                                                                                                                                                                                                                                                    console.log(`Logged in as ${client.user.tag}`);
-                                                                                                                                                                                                                                                                      start();
-                                                                                                                                                                                                                                                                      });
+                                                                                                                                                                                                                                                                    setInterval(async () => {
+                                                                                                                                                                                                                                                                        for (const handle of CONFIG.WATCH_ACCOUNTS) {
+                                                                                                                                                                                                                                                                              await fetchAndPost(channel, handle);
+                                                                                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                                                                                    }, CONFIG.POLL_INTERVAL_MS);
+                                                                                                                                                                                                                                                                                    });
 
-                                                                                                                                                                                                                                                                      client.login(TOKEN);const
+                                                                                                                                                                                                                                                                                    discord.on("error", (err) => console.error("Discord error:", err));
+                                                                                                                                                                                                                                                                                    discord.login(CONFIG.DISCORD_TOKEN);constconstconstconst
