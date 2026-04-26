@@ -8,7 +8,7 @@ const CONFIG = {
         // Add accounts: { handle, user_id }
           // To find user_id: search "get twitter user id by username" online
             WATCH_ACCOUNTS: [
-                { handle: "elonmusk", user_id: "44196397" },
+                { handle: "HINDU_KlNG", user_id: "2038193116151209984" },
                     { handle: "OpenAI", user_id: "972651467338199041" },
                         { handle: "NASA", user_id: "11348282" },
                           ],
