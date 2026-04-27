@@ -19,7 +19,7 @@ let browser, page;
 
 async function launchBrowser() {
   console.log("Launching browser...");
-  browser = await chromium.launch({
+  browser = await chromium.launch({ executablePath: '/usr/bin/chromium' ||  '/usr/bin/chromium-browser' || undefined,
     headless: true,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
   });
