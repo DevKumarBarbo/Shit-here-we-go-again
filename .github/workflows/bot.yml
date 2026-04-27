@@ -40,7 +40,7 @@ jobs:
           NEWS_CHANNEL_ID: ${{ secrets.NEWS_CHANNEL_ID }}
           TWITTER_USERNAME: ${{ secrets.TWITTER_USERNAME }}
           TWITTER_PASSWORD: ${{ secrets.TWITTER_PASSWORD }}
-        timeout-minutes: 8
+        timeout-minutes: 15
 
       - name: Save seen IDs
         uses: actions/cache/save@v4
