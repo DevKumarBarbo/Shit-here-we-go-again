@@ -1,0 +1,5 @@
+[phases.setup]
+nixPkgs = ["chromium", "glib", "nss", "atk", "cups", "libdrm", "mesa", "pango", "cairo"]
+
+[start]
+cmd = "node bot.js"
