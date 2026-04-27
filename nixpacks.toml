@@ -1,5 +1,0 @@
-[phases.setup]
-nixPkgs = ["chromium", "glib", "nss", "nspr", "atk", "at-spi2-atk", "cups", "libdrm", "libxkbcommon", "mesa", "pango", "cairo", "alsa-lib", "xorg.libX11", "xorg.libXcomposite", "xorg.libXdamage", "xorg.libXext", "xorg.libXfixes", "xorg.libXrandr", "xorg.libxcb"]
-
-[start]
-cmd = "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 node bot.js"
