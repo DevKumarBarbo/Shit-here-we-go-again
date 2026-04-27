@@ -6,7 +6,7 @@ const CONFIG = {
   NEWS_CHANNEL_ID: process.env.NEWS_CHANNEL_ID,
   TWITTER_USERNAME: process.env.TWITTER_USERNAME,
   TWITTER_PASSWORD: process.env.TWITTER_PASSWORD,
-  WATCH_ACCOUNTS: ["elonmusk", "NASA", "NVIDIAGeForce", "Intel", "Google", "YouTube"],
+  WATCH_ACCOUNTS: ["HINDU_KlNG", "NASA", "NVIDIAGeForce", "Intel", "Google", "YouTube"],
   POLL_INTERVAL_MS: 5 * 60 * 1000,
 };
 
