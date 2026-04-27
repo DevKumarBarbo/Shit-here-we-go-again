@@ -8,6 +8,7 @@ const CONFIG = {
   TWITTER_PASSWORD: process.env.TWITTER_PASSWORD,
   WATCH_ACCOUNTS: ["elonmusk", "NASA", "NVIDIAGeForce", "Intel", "Google", "YouTube", "HINDU_KlNG"],
   POLL_INTERVAL_MS: 5 * 60 * 1000,
+  POST_ON_STARTUP: true, // posts latest tweet from each account on startup to confirm working
 };
 
 const discord = new Client({
@@ -16,7 +17,6 @@ const discord = new Client({
 
 const seenIds = {};
 let browser, page;
-let isLoggedIn = false;
 
 async function launchBrowser() {
   console.log("Launching browser...");
@@ -29,46 +29,29 @@ async function launchBrowser() {
 }
 
 async function login() {
-  if (isLoggedIn) return;
   console.log("Logging into X...");
   try {
     await page.goto("https://x.com/login", { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForTimeout(5000);
-
-    // Type username
     await page.waitForSelector('input[autocomplete="username"]', { timeout: 20000 });
     await page.fill('input[autocomplete="username"]', CONFIG.TWITTER_USERNAME);
     await page.waitForTimeout(1000);
     await page.keyboard.press("Enter");
     await page.waitForTimeout(3000);
-
-    // Handle phone/email verification step
     const extra = await page.$('input[data-testid="ocfEnterTextTextInput"]');
     if (extra) {
-      console.log("Extra verification needed...");
       await extra.fill(CONFIG.TWITTER_USERNAME);
       await page.keyboard.press("Enter");
       await page.waitForTimeout(3000);
     }
-
-    // Type password
     await page.waitForSelector('input[type="password"]', { timeout: 20000 });
     await page.fill('input[type="password"]', CONFIG.TWITTER_PASSWORD);
     await page.waitForTimeout(1000);
     await page.keyboard.press("Enter");
     await page.waitForTimeout(5000);
-
-    // Check if logged in
-    const url = page.url();
-    if (url.includes("home") || url.includes("x.com/") && !url.includes("login")) {
-      isLoggedIn = true;
-      console.log("✅ Logged in successfully!");
-    } else {
-      console.log("⚠️ Login may have failed, continuing anyway...");
-    }
+    console.log("Login attempt done");
   } catch (err) {
-    console.error("Login error:", err.message);
-    console.log("Continuing without login - public tweets still visible");
+    console.log("Login failed, continuing with public access:", err.message);
   }
 }
 
@@ -76,9 +59,7 @@ async function fetchTweets(handle) {
   try {
     await page.goto(`https://x.com/${handle}`, { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForTimeout(4000);
-
-    // Scroll a bit to load more tweets
-    await page.evaluate(() => window.scrollBy(0, 500));
+    await page.evaluate(() => window.scrollBy(0, 300));
     await page.waitForTimeout(1000);
 
     const tweets = await page.evaluate(() => {
@@ -124,9 +105,7 @@ async function fetchTweets(handle) {
 }
 
 function buildEmbed(tweet, handle) {
-  // Clean up tweet text - remove t.co links at end
   const cleanText = tweet.text.replace(/https:\/\/t\.co\/\S+/g, "").trim();
-
   const embed = new EmbedBuilder()
     .setColor(0x1a1a2e)
     .setAuthor({
@@ -134,48 +113,47 @@ function buildEmbed(tweet, handle) {
       url: `https://x.com/${handle}`,
       iconURL: `https://unavatar.io/twitter/${handle}`,
     })
-    .setDescription(cleanText.length > 0 ? cleanText.slice(0, 4096) : "*[Media/Link post]*")
+    .setDescription(cleanText.length > 0 ? cleanText.slice(0, 4096) : "*[Media post]*")
     .setURL(tweet.url)
     .setTimestamp(tweet.date ? new Date(tweet.date) : new Date())
-    .setFooter({ text: "𝕏  Twitter/X" })
+    .setFooter({ text: "𝕏 Twitter/X" })
     .addFields({
       name: "📊 Engagement",
-      value: `❤️ **${tweet.likes}** Likes  ·  🔁 **${tweet.retweets}** Retweets  ·  💬 **${tweet.replies}** Replies`,
-      inline: false,
+      value: `❤️ **${tweet.likes}** · 🔁 **${tweet.retweets}** · 💬 **${tweet.replies}**`,
     });
-
   if (tweet.image) embed.setImage(tweet.image);
-
   return embed;
 }
 
-async function fetchAndPost(channel, handle) {
+async function fetchAndPost(channel, handle, forcePost) {
   const tweets = await fetchTweets(handle);
   if (!tweets || tweets.length === 0) return;
 
-  if (false) {
-    seenIds[handle] = new Set(tweets.map((t) => t.id));
-    console.log(`[${handle}] Seeded ${seenIds[handle].size} tweets`);
+  // On startup with forcePost: post the latest tweet to confirm working
+  if (forcePost) {
+    const latest = tweets.find(t => !t.is_retweet);
+    if (latest) {
+      await channel.send({ content: `✅ Bot connected! Latest post from **@${handle}**:`, embeds: [buildEmbed(latest, handle)] });
+      console.log(`[${handle}] ✅ Test post sent!`);
+    }
+    seenIds[handle] = new Set(tweets.map(t => t.id));
     return;
   }
 
-  const newTweets = tweets.filter((t) => !seenIds[handle].has(t.id));
-  if (newTweets.length === 0) {
-    console.log(`[${handle}] No new tweets`);
+  if (!seenIds[handle]) {
+    seenIds[handle] = new Set(tweets.map(t => t.id));
+    console.log(`[${handle}] Seeded ${seenIds[handle].size}`);
     return;
   }
 
-  console.log(`[${handle}] ${newTweets.length} new tweets!`);
+  const newTweets = tweets.filter(t => !seenIds[handle].has(t.id));
+  if (newTweets.length === 0) { console.log(`[${handle}] No new tweets`); return; }
 
   for (const tweet of [...newTweets].reverse()) {
     if (tweet.is_retweet) continue;
-    try {
-      await channel.send({ embeds: [buildEmbed(tweet, handle)] });
-      seenIds[handle].add(tweet.id);
-      console.log(`[${handle}] ✅ Posted: ${tweet.text.slice(0, 50)}`);
-    } catch (err) {
-      console.error(`[${handle}] Send error: ${err.message}`);
-    }
+    await channel.send({ embeds: [buildEmbed(tweet, handle)] });
+    seenIds[handle].add(tweet.id);
+    console.log(`[${handle}] ✅ Posted: ${tweet.text.slice(0, 50)}`);
   }
 }
 
@@ -187,23 +165,22 @@ discord.once("clientReady", async () => {
   await launchBrowser();
   await login();
 
-  console.log(`📡 Watching: ${CONFIG.WATCH_ACCOUNTS.map((h) => "@" + h).join(", ")}`);
+  console.log(`📡 Watching: ${CONFIG.WATCH_ACCOUNTS.map(h => "@" + h).join(", ")}`);
 
-  // Seed all accounts
+  // Post latest tweet from each account on startup to confirm working
   for (const handle of CONFIG.WATCH_ACCOUNTS) {
-    await fetchAndPost(channel, handle);
+    await fetchAndPost(channel, handle, CONFIG.POST_ON_STARTUP);
   }
 
-  console.log(`✅ Ready! Polling every ${CONFIG.POLL_INTERVAL_MS / 60000} minutes`);
+  console.log("✅ Startup done! Polling every 5 minutes...");
 
-  // Poll forever
   setInterval(async () => {
-    console.log(`🔄 Polling...`);
+    console.log("🔄 Polling...");
     for (const handle of CONFIG.WATCH_ACCOUNTS) {
-      await fetchAndPost(channel, handle);
+      await fetchAndPost(channel, handle, false);
     }
   }, CONFIG.POLL_INTERVAL_MS);
 });
 
-discord.on("error", (err) => console.error("Discord error:", err));
+discord.on("error", err => console.error("Discord error:", err));
 discord.login(CONFIG.DISCORD_TOKEN);
