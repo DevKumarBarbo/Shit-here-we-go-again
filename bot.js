@@ -1,289 +1,179 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=0.75, maximum-scale=5.0, user-scalable=yes" />
-        <script async src="https://www.googletagmanager.com/gtag/js?id=G-S72LBY47R8"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', "G-S72LBY47R8");
-    </script>
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Pastebin.com - Not Found (#404)</title>
-    <link rel="shortcut icon" href="/favicon.ico" />
-    <meta name="description" content="Pastebin.com is the number one paste tool since 2002. Pastebin is a website where you can store text online for a set period of time." />
-    <meta property="og:description" content="Pastebin.com is the number one paste tool since 2002. Pastebin is a website where you can store text online for a set period of time." />
-            <meta property="fb:app_id" content="231493360234820" />
-    <meta property="og:title" content="Pastebin.com - Not Found (#404)" />
-    <meta property="og:type" content="article" />
-    <meta property="og:url" content="https://pastebin.com/raw/BOTJS" />
-    <meta property="og:image" content="https://pastebin.com/i/facebook.png" />
-    <meta property="og:site_name" content="Pastebin" />
-    <meta name="google-site-verification" content="jkUAIOE8owUXu8UXIhRLB9oHJsWBfOgJbZzncqHoF4A" />
-    <link rel="canonical" href="https://pastebin.com/raw/BOTJS" />
-        <meta name="csrf-param" content="_csrf-frontend">
-<meta name="csrf-token" content="2h2zQvd1fPbztm0ltvYXLxtnVyKOLHxNb1VuwGuUa6eMfsclth4but77Xkv3qVt-Wj8Nd816MXw7Z1aQGvYS8A==">
+const { chromium } = require("playwright");
+const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 
-<link href="/assets/c80611c4/css/bootstrap.min.css" rel="stylesheet">
-<link href="/assets/d65ff796/dist/bootstrap-tagsinput.css" rel="stylesheet">        
-<link href="/themes/pastebin/css/vendors.bundle.css?30d6ece6979ee0cf5531" rel="stylesheet">
-<link href="/themes/pastebin/css/app.bundle.css?30d6ece6979ee0cf5531" rel="stylesheet">
-    </head>
-<body class="night-auto " data-pr="EykQt2a9" data-pa="" data-sar="1" data-abd="1" data-bd="1">
+const CONFIG = {
+  DISCORD_TOKEN: process.env.DISCORD_TOKEN,
+  NEWS_CHANNEL_ID: process.env.NEWS_CHANNEL_ID,
+  TWITTER_USERNAME: process.env.TWITTER_USERNAME,
+  TWITTER_PASSWORD: process.env.TWITTER_PASSWORD,
+  WATCH_ACCOUNTS: ["elonmusk", "OpenAI", "NASA"],
+  POLL_INTERVAL_MS: 5 * 60 * 1000, // 5 minutes
+};
 
+const discord = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+});
 
-<svg style="height: 0; width: 0; position: absolute; visibility: hidden" xmlns="http://www.w3.org/2000/svg">
-    <symbol id="add" viewBox="0 0 1024 1024"><path fill="#ccc" d="M512 16C238 16 16 238 16 512s222 496 496 496 496-222 496-496S786 16 512 16z m288 552c0 13.2-10.8 24-24 24h-184v184c0 13.2-10.8 24-24 24h-112c-13.2 0-24-10.8-24-24v-184h-184c-13.2 0-24-10.8-24-24v-112c0-13.2 10.8-24 24-24h184v-184c0-13.2 10.8-24 24-24h112c13.2 0 24 10.8 24 24v184h184c13.2 0 24 10.8 24 24v112z"/></symbol>
-    <symbol id="search" viewBox="0 0 512 512"><path fill="#ccc" d="M354.2,216c0-38.2-13-70.7-40-97.7c-27-27-59.6-40-97.7-40s-70.7,13-97.7,40s-40,59.6-40,97.7 s13,70.7,40,97.7s59.6,40,97.7,40s70.7-13,97.7-40C340.2,285.8,354.2,253.2,354.2,216z M511.5,472c0,10.2-3.7,19.5-12.1,27.9 c-8.4,8.4-16.8,12.1-27.9,12.1c-11.2,0-20.5-3.7-27.9-12.1L339.3,393.8c-37.2,26.1-78.2,38.2-122.9,38.2 c-29.8,0-57.7-5.6-83.8-16.8c-27-11.2-50.3-27-68.9-46.5s-34.4-42.8-46.5-68.9C6.1,272.8,0.5,244.8,0.5,216s5.6-57.7,16.8-83.8 c11.2-27,27-50.3,46.5-68.9s42.8-34.4,68.9-46.5C159.7,5.6,187.6,0,216.4,0s57.7,5.6,83.8,16.8c27,11.2,50.3,27,68.9,46.5 c18.6,19.5,34.4,42.8,46.5,68.9c11.2,27,16.8,54.9,16.8,83.8c0,44.7-13,85.6-38.2,122.9L499.4,444 C507.8,451.5,511.5,460.8,511.5,472z"/></g></symbol>
-</svg>
-<div class="wrap">
+const seenIds = {};
+let browser, page;
 
-        
-        
-<div class="header">
-    <div class="container">
-        <div class="header__container">
+async function launchBrowser() {
+  console.log("Launching browser...");
+  browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+  });
+  page = await browser.newPage();
+  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+  console.log("Browser ready");
+}
 
-                        <div class="header__left">
-                <a class="header__logo" href="/">
-                    Pastebin                </a>
+async function login() {
+  console.log("Logging into X...");
+  await page.goto("https://x.com/login", { waitUntil: "networkidle" });
+  await page.waitForTimeout(2000);
 
-                <div class="header__links h_1024">
-                    
-                                        <a href="/doc_api">API</a>
-                    <a href="/tools">tools</a>
-                    <a href="/faq">faq</a>
-                                    </div>
+  // Enter username
+  await page.fill('input[autocomplete="username"]', CONFIG.TWITTER_USERNAME);
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(2000);
 
-                <a class="header__btn" href="/">
-                    <span>paste</span>
-                </a>
+  // Handle possible "enter phone/email" step
+  const unusual = await page.$('input[data-testid="ocfEnterTextTextInput"]');
+  if (unusual) {
+    await unusual.fill(CONFIG.TWITTER_USERNAME);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(2000);
+  }
 
-                
-                <div class="header__search">
-                                            <form id="w1" class="search_form" action="https://pastebin.com/search" method="get">
-                            
-<input type="text" id="q" class="search_input" name="q" maxlength="128" placeholder="Search...">
+  // Enter password
+  await page.fill('input[type="password"]', CONFIG.TWITTER_PASSWORD);
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(3000);
 
+  console.log("Logged in!");
+}
 
+async function fetchTweets(handle) {
+  try {
+    await page.goto(`https://x.com/${handle}`, { waitUntil: "networkidle", timeout: 30000 });
+    await page.waitForTimeout(3000);
 
-                            <button type="submit" class="search_btn" aria-label="Search"><svg class="icon search"><use xlink:href="#search"></use></svg></button>
-                        </form>                                    </div>
+    const tweets = await page.evaluate(() => {
+      const results = [];
+      const articles = document.querySelectorAll('article[data-testid="tweet"]');
 
-            </div>
+      for (const article of articles) {
+        try {
+          // Get tweet text
+          const textEl = article.querySelector('[data-testid="tweetText"]');
+          const text = textEl ? textEl.innerText : "";
 
-                        <div class="header__right">
+          // Get tweet link/ID
+          const timeEl = article.querySelector("time");
+          const linkEl = timeEl ? timeEl.closest("a") : null;
+          const href = linkEl ? linkEl.href : "";
+          const idMatch = href.match(/status\/(\d+)/);
+          const id = idMatch ? idMatch[1] : null;
 
-                                    <div class="header_sign">
-                        <a href="/login" class="btn-sign sign-in">Login</a>
-                        <a href="/signup" class="btn-sign sign-up">Sign up</a>
-                    </div>
-                
-            </div>
+          // Get image
+          const imgEl = article.querySelector('[data-testid="tweetPhoto"] img');
+          const image = imgEl ? imgEl.src : null;
 
-        </div>
-    </div>
+          // Get stats
+          const likeEl = article.querySelector('[data-testid="like"] span');
+          const rtEl = article.querySelector('[data-testid="retweet"] span');
+          const replyEl = article.querySelector('[data-testid="reply"] span');
 
-</div>
-        
+          if (id && text) {
+            results.push({
+              id,
+              text,
+              image,
+              likes: likeEl ? likeEl.innerText : "0",
+              retweets: rtEl ? rtEl.innerText : "0",
+              replies: replyEl ? replyEl.innerText : "0",
+              url: href,
+              is_retweet: text.startsWith("RT @"),
+            });
+          }
+        } catch (e) {}
+      }
+      return results;
+    });
 
-    <div class="container">
-        <div class="content">
+    return tweets;
+  } catch (err) {
+    console.error(`[${handle}] Fetch error: ${err.message}`);
+    return [];
+  }
+}
 
-                        
-                        
-                                    
-            
-            
-<div class="page -top -right">
+function buildEmbed(tweet, handle) {
+  const embed = new EmbedBuilder()
+    .setColor(0x000000)
+    .setAuthor({ name: `@${handle}`, url: `https://x.com/${handle}` })
+    .setDescription(tweet.text.slice(0, 4096))
+    .setURL(tweet.url)
+    .setFooter({ text: `𝕏 Post · @${handle}` })
+    .addFields({
+      name: "Engagement",
+      value: `❤️ ${tweet.likes || 0}  🔁 ${tweet.retweets || 0}  💬 ${tweet.replies || 0}`,
+    });
+  if (tweet.image) embed.setImage(tweet.image);
+  return embed;
+}
 
-    <div class="content__title">Not Found (#404)</div>
-    <div class="content__text">
-        <div class="notice -no-margin">
-            Page not found.        </div>
-    </div>
+async function fetchAndPost(channel, handle) {
+  const tweets = await fetchTweets(handle);
+  if (!tweets || tweets.length === 0) {
+    console.log(`[${handle}] No tweets found`);
+    return;
+  }
 
-</div>
-            <div style="clear: both;"></div>
+  if (!seenIds[handle]) {
+    seenIds[handle] = new Set(tweets.map((t) => t.id));
+    console.log(`[${handle}] Seeded ${seenIds[handle].size} tweets`);
+    return;
+  }
 
-                                </div>
+  const newTweets = tweets.filter((t) => !seenIds[handle].has(t.id));
+  console.log(`[${handle}] ${newTweets.length} new tweets`);
 
-        <div class="sidebar h_1024">
-            
+  for (const tweet of [...newTweets].reverse()) {
+    if (tweet.is_retweet) continue;
+    try {
+      await channel.send({ embeds: [buildEmbed(tweet, handle)] });
+      seenIds[handle].add(tweet.id);
+      console.log(`[${handle}] ✅ Posted: ${tweet.text.slice(0, 50)}`);
+    } catch (err) {
+      console.error(`[${handle}] Send error: ${err.message}`);
+    }
+  }
+}
 
+discord.once("clientReady", async () => {
+  console.log(`✅ Bot online: ${discord.user.tag}`);
 
+  const channel = await discord.channels.fetch(CONFIG.NEWS_CHANNEL_ID).catch(() => null);
+  if (!channel) { console.error("❌ Channel not found"); process.exit(1); }
 
-                
-    <div class="sidebar__title">
-        <a href="/archive">Public Pastes</a>
-    </div>
-    <ul class="sidebar__menu">
+  await launchBrowser();
+  await login();
 
-                    <li>
-                <a href="/Rhugpbnc?source=public_pastes">Untitled</a>
-                <div class="details">
-                    
-                    6 min ago
-                    | 21.15 KB                </div>
-            </li>
-                    <li>
-                <a href="/UL9wmF3G?source=public_pastes">Untitled</a>
-                <div class="details">
-                    
-                    2 hours ago
-                    | 14.75 KB                </div>
-            </li>
-                    <li>
-                <a href="/CWAm7Rdr?source=public_pastes">Untitled</a>
-                <div class="details">
-                    
-                    2 hours ago
-                    | 5.23 KB                </div>
-            </li>
-                    <li>
-                <a href="/gAmPRwU3?source=public_pastes">Untitled</a>
-                <div class="details">
-                    
-                    3 hours ago
-                    | 4.77 KB                </div>
-            </li>
-                    <li>
-                <a href="/BH02vmRs?source=public_pastes">Current Media</a>
-                <div class="details">
-                    
-                    3 hours ago
-                    | 1.90 KB                </div>
-            </li>
-                    <li>
-                <a href="/PgxcSRJv?source=public_pastes">Untitled</a>
-                <div class="details">
-                    
-                    4 hours ago
-                    | 19.36 KB                </div>
-            </li>
-                    <li>
-                <a href="/cFarupiC?source=public_pastes">Untitled</a>
-                <div class="details">
-                    
-                    4 hours ago
-                    | 0.22 KB                </div>
-            </li>
-                    <li>
-                <a href="/9Zz4qavK?source=public_pastes">Untitled</a>
-                <div class="details">
-                    
-                    5 hours ago
-                    | 7.85 KB                </div>
-            </li>
-        
-    </ul>
-            
+  console.log(`📡 Watching: ${CONFIG.WATCH_ACCOUNTS.map((h) => "@" + h).join(", ")}`);
+  console.log(`⏱️  Every ${CONFIG.POLL_INTERVAL_MS / 60000} minutes`);
 
-    <div class="sidebar__sticky -on">
-                    </div>
-        </div>
-    </div>
-</div>
+  for (const handle of CONFIG.WATCH_ACCOUNTS) {
+    await fetchAndPost(channel, handle);
+  }
 
+  setInterval(async () => {
+    for (const handle of CONFIG.WATCH_ACCOUNTS) {
+      await fetchAndPost(channel, handle);
+    }
+  }, CONFIG.POLL_INTERVAL_MS);
+});
 
-    
-<div class="top-footer">
-    <a class="icon-link -size-24-24 -chrome" href="/tools#chrome" title="Google Chrome Extension"></a>
-    <a class="icon-link -size-24-24 -firefox" href="/tools#firefox" title="Firefox Extension"></a>
-    <a class="icon-link -size-24-24 -iphone" href="/tools#iphone" title="iPhone/iPad Application"></a>
-    <a class="icon-link -size-24-24 -windows" href="/tools#windows" title="Windows Desktop Application"></a>
-    <a class="icon-link -size-24-24 -android" href="/tools#android" title="Android Application"></a>
-    <a class="icon-link -size-24-24 -macos" href="/tools#macos" title="MacOS X Widget"></a>
-    <a class="icon-link -size-24-24 -opera" href="/tools#opera" title="Opera Extension"></a>
-    <a class="icon-link -size-24-24 -unix" href="/tools#pastebincl" title="Linux Application"></a>
-</div>
-
-<footer class="footer">
-    <div class="container">
-        <div class="footer__container">
-
-            <div class="footer__left">
-                <a href="/">create new paste</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                                <a href="/languages">syntax languages</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/archive">archive</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/faq">faq</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/tools">tools</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/night_mode">night mode</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/doc_api">api</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/doc_scraping_api">scraping api</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/news">news</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/pro" class="pro">pro</a>
-
-                <br>
-                <a href="/doc_privacy_statement">privacy statement</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/doc_cookies_policy">cookies policy</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/doc_terms_of_service">terms of service</a><span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/doc_security_disclosure">security disclosure</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/dmca">dmca</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/report-abuse">report abuse</a> <span class="footer__devider">&nbsp;/&nbsp;</span>
-                <a href="/contact">contact</a>
-
-                <br>
-
-                                
-                <br>
-
-                
-<span class="footer__bottom h_800">
-    By using Pastebin.com you agree to our <a href="/doc_cookies_policy">cookies policy</a> to enhance your experience.
-    <br>
-    Site design &amp; logo &copy; 2026 Pastebin</span>
-            </div>
-
-            <div class="footer__right h_1024">
-                                    <a class="icon-link -size-40-40 -facebook-circle" href="https://facebook.com/pastebin" rel="nofollow" title="Like us on Facebook" target="_blank"></a>
-                    <a class="icon-link -size-40-40 -twitter-circle" href="https://twitter.com/pastebin" rel="nofollow" title="Follow us on Twitter" target="_blank"></a>
-                            </div>
-
-        </div>
-    </div>
-</footer>
-    
-
-
-    
-<div class="popup-container">
-
-                <div class="popup-box -cookies" data-name="l2c_1">
-            We use cookies for various purposes including analytics. By continuing to use Pastebin, you agree to our use of cookies as described in the <a href="/doc_cookies_policy">Cookies Policy</a>.            &nbsp;<span class="cookie-button js-close-cookies">OK, I Understand</span>
-        </div>
-    
-                <div class="popup-box -pro" data-name="l2c_2_pg">
-            <div class="pro-promo-img">
-                <a href="/signup" aria-label="Sign Up">
-                    <img src="/themes/pastebin/img/hello.webp" alt=""/>
-                </a>
-            </div>
-            <div class="pro-promo-text">
-                Not a member of Pastebin yet?<br/>
-                <a href="/signup"><b>Sign Up</b></a>, it unlocks many cool features!            </div>
-            <div class="close js-close-pro-guest" title="Close Me">&nbsp;</div>
-        </div>
-    
-    
-    
-</div>
-    
-
-<span class="cd-top"></span>
-
-<script src="/assets/9ce1885/jquery.min.js"></script>
-<script src="/assets/f04f76b8/yii.js"></script>
-<script src="/assets/d65ff796/dist/bootstrap-tagsinput.js"></script>
-<script>
-    const POST_EXPIRATION_NEVER = 'N';
-    const POST_EXPIRATION_BURN = 'B';
-    const POST_STATUS_PUBLIC = '0';
-    const POST_STATUS_UNLISTED = '1';
-</script>
-<script src="/themes/pastebin/js/vendors.bundle.js?30d6ece6979ee0cf5531"></script>
-<script src="/themes/pastebin/js/app.bundle.js?30d6ece6979ee0cf5531"></script>
-
-</body>
-</html>
+discord.on("error", (err) => console.error("Discord error:", err));
+discord.login(CONFIG.DISCORD_TOKEN);
