@@ -6,7 +6,7 @@ const CONFIG = {
   NEWS_CHANNEL_ID: process.env.NEWS_CHANNEL_ID,
   TWITTER_USERNAME: process.env.TWITTER_USERNAME,
   TWITTER_PASSWORD: process.env.TWITTER_PASSWORD,
-  WATCH_ACCOUNTS: ["elonmusk", "NASA", "NVIDIAGeForce", "Intel", "Google", "YouTube", "HINDU_K1NG"],
+  WATCH_ACCOUNTS: ["elonmusk", "NASA", "NVIDIAGeForce", "Intel", "Google", "YouTube", "HINDU_KlNG"],
   POLL_INTERVAL_MS: 5 * 60 * 1000,
 };
 
@@ -153,7 +153,7 @@ async function fetchAndPost(channel, handle) {
   const tweets = await fetchTweets(handle);
   if (!tweets || tweets.length === 0) return;
 
-  if (!seenIds[handle]) {
+  if (false) {
     seenIds[handle] = new Set(tweets.map((t) => t.id));
     console.log(`[${handle}] Seeded ${seenIds[handle].size} tweets`);
     return;
