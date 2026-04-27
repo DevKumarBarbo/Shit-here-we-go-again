@@ -7,7 +7,7 @@ const CONFIG = {
   NEWS_CHANNEL_ID: process.env.NEWS_CHANNEL_ID,
   TWITTER_USERNAME: process.env.TWITTER_USERNAME,
   TWITTER_PASSWORD: process.env.TWITTER_PASSWORD,
-  WATCH_ACCOUNTS: ["elonmusk", "NASA", "NVIDIAGeForce", "Intel", "Google", "YouTube", "HINDU_KlNG"],
+  WATCH_ACCOUNTS: ["elonmusk", "HINDU_KlNG"],
   SEEN_FILE: "seen_ids.json",
 };
 
