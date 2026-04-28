@@ -101,7 +101,7 @@ async function fetchFromFxTwitter(handle) {
   try {
     // fxtwitter has a public API for individual tweets
     // We get the user's latest tweet ID from their profile page
-    const res = await fetch(`https://api.fxtwitter.com/${handle}`, {
+    const res = await fetch(`https://api.fxtwitter.com/${handle}/tweets`, {
       headers: { "User-Agent": "Mozilla/5.0" },
       signal: AbortSignal.timeout(10000),
     });
