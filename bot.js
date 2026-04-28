@@ -1,5 +1,4 @@
-const { chromium } = require("playwright");
-const { Client, GatewayIntentBits, EmbedBuilder, WebhookClient } = require("discord.js");
+const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 const fs = require("fs");
 
 const CONFIG = {
@@ -7,17 +6,21 @@ const CONFIG = {
   NEWS_CHANNEL_ID: process.env.NEWS_CHANNEL_ID,
   WATCH_ACCOUNTS: ["elonmusk", "NASA", "NVIDIAGeForce", "Intel", "Google", "YouTube", "HINDU_KlNG"],
   SEEN_FILE: "seen_ids.json",
+  NITTER_INSTANCES: [
+    "https://nitter.net",
+    "https://nitter.privacydev.net",
+    "https://nitter.poast.org",
+  ],
 };
 
-// Account display names and colors for branding
 const ACCOUNT_META = {
-  elonmusk:     { name: "Elon Musk",       color: 0xe8e8e8, badge: "👤" },
-  NASA:         { name: "NASA",             color: 0x0b3d91, badge: "🚀" },
-  NVIDIAGeForce:{ name: "NVIDIA GeForce",  color: 0x76b900, badge: "🎮" },
-  Intel:        { name: "Intel",            color: 0x0071c5, badge: "💻" },
-  Google:       { name: "Google",           color: 0x4285f4, badge: "🔍" },
-  YouTube:      { name: "YouTube",          color: 0xff0000, badge: "▶️" },
-  HINDU_KlNG:   { name: "HINDU KlNG",      color: 0xff6600, badge: "👑" },
+  elonmusk:      { name: "Elon Musk",       color: 0xe8e8e8, badge: "👤" },
+  NASA:          { name: "NASA",             color: 0x0b3d91, badge: "🚀" },
+  NVIDIAGeForce: { name: "NVIDIA GeForce",  color: 0x76b900, badge: "🎮" },
+  Intel:         { name: "Intel",            color: 0x0071c5, badge: "💻" },
+  Google:        { name: "Google",           color: 0x4285f4, badge: "🔍" },
+  YouTube:       { name: "YouTube",          color: 0xff0000, badge: "▶️" },
+  HINDU_KlNG:    { name: "HINDU KlNG",      color: 0xff6600, badge: "👑" },
 };
 
 function loadSeen() {
@@ -38,82 +41,117 @@ async function sleep(ms) {
 }
 
 function formatNumber(n) {
-  if (!n || n === "0") return "0";
-  const num = parseInt(n.replace(/[^0-9]/g, "")) || 0;
+  if (!n) return "0";
+  const num = parseInt(String(n).replace(/[^0-9]/g, "")) || 0;
   if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
   if (num >= 1000) return (num / 1000).toFixed(1) + "K";
   return num.toString();
 }
 
-function getPostTypeInfo(tweet) {
-  if (tweet.isRepost)        return { label: "Repost",    icon: "🔁", color: 0x00c853, bar: "▰▰▰▰▰" };
-  if (tweet.isReply)         return { label: "Reply",     icon: "💬", color: 0x1d9bf0, bar: "▰▰▰▰▰" };
-  if (tweet.hasVideo)        return { label: "Video",     icon: "🎬", color: 0x9b59b6, bar: "▰▰▰▰▰" };
-  if (tweet.gif)             return { label: "GIF",       icon: "🎞️", color: 0xe91e63, bar: "▰▰▰▰▰" };
-  if (tweet.images.length>0) return { label: "Photo",     icon: "🖼️", color: 0xff6f00, bar: "▰▰▰▰▰" };
-  return                            { label: "Post",      icon: "✍️", color: 0x14171a, bar: "▰▰▰▰▰" };
+// Fetch latest tweet IDs from nitter RSS (plain HTTP, no browser needed)
+async function fetchFromNitter(handle) {
+  for (const instance of CONFIG.NITTER_INSTANCES) {
+    try {
+      const url = `${instance}/${handle}/rss`;
+      const res = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS reader)" },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) continue;
+      const xml = await res.text();
+
+      // Parse RSS items
+      const items = [];
+      const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g);
+      for (const match of itemMatches) {
+        const item = match[1];
+        const title = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] || "";
+        const link = item.match(/<link>(.*?)<\/link>/)?.[1] || "";
+        const pubDate = item.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || "";
+        const desc = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1] || "";
+
+        // Extract tweet ID from link
+        const idMatch = link.match(/status\/(\d+)/);
+        if (!idMatch) continue;
+        const id = idMatch[1];
+
+        // Extract image from description
+        const imgMatch = desc.match(/<img[^>]+src="([^"]+)"/);
+        const image = imgMatch ? imgMatch[1].replace(instance, "https://pbs.twimg.com") : null;
+
+        // Clean text
+        const cleanText = title
+          .replace(/^R to @\w+: /, "")
+          .replace(/^RT by @\w+: /, "")
+          .trim();
+
+        const isRetweet = title.startsWith("RT by");
+        const isReply = title.startsWith("R to");
+
+        items.push({
+          id,
+          text: cleanText,
+          link: `https://x.com/${handle}/status/${id}`,
+          date: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
+          image: image && image.startsWith("http") ? image : null,
+          isRetweet,
+          isReply,
+          likes: "0",
+          retweets: "0",
+          replies: "0",
+        });
+      }
+
+      if (items.length > 0) {
+        console.log(`[${handle}] Got ${items.length} posts from ${instance}`);
+        return items;
+      }
+    } catch (err) {
+      console.log(`[${handle}] ${instance} failed: ${err.message}`);
+      continue;
+    }
+  }
+
+  // Fallback: try fxtwitter API for individual tweet lookup
+  console.log(`[${handle}] All nitter instances failed`);
+  return [];
 }
 
 function buildEmbed(tweet, handle) {
   const meta = ACCOUNT_META[handle] || { name: `@${handle}`, color: 0x14171a, badge: "📢" };
-  const typeInfo = getPostTypeInfo(tweet);
-  const color = ACCOUNT_META[handle] ? meta.color : typeInfo.color;
 
-  const tweetUrl = tweet.href || `https://x.com/${handle}/status/${tweet.id}`;
+  let postType, postIcon, color;
+  if (tweet.isRetweet)  { postType = "Repost";  postIcon = "🔁"; color = 0x00c853; }
+  else if (tweet.isReply) { postType = "Reply"; postIcon = "💬"; color = 0x1d9bf0; }
+  else if (tweet.image)   { postType = "Photo"; postIcon = "🖼️"; color = 0xff6f00; }
+  else                    { postType = "Post";  postIcon = "✍️"; color = meta.color; }
+
+  const tweetUrl = tweet.link;
   const profileUrl = `https://x.com/${handle}`;
   const iconUrl = `https://unavatar.io/twitter/${handle}`;
 
-  // Clean text
-  const cleanText = tweet.text
-    .replace(/https:\/\/t\.co\/\S+/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .trim();
-
-  // Format date
   const postDate = tweet.date ? new Date(tweet.date) : new Date();
   const dateFormatted = postDate.toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
-    hour: "2-digit", minute: "2-digit", timeZone: "UTC", timeZoneName: "short"
+    hour: "2-digit", minute: "2-digit", timeZone: "UTC", timeZoneName: "short",
   });
 
-  // Media note
-  const mediaLine = tweet.hasVideo
-    ? `\n\n🎬 **[Click to watch video on X](${tweetUrl})**`
-    : tweet.gif
-    ? `\n\n🎞️ **[Click to view GIF on X](${tweetUrl})**`
-    : "";
-
-  // Build description with quote styling
-  const bodyText = cleanText.length > 0
-    ? cleanText + mediaLine
-    : `*This post contains only media.*${mediaLine}`;
-
-  // Engagement bar
-  const likes    = formatNumber(tweet.likes);
-  const reposts  = formatNumber(tweet.retweets);
-  const replies  = formatNumber(tweet.replies);
+  const bodyText = tweet.text.length > 0 ? tweet.text : "*This post contains only media.*";
 
   const embed = new EmbedBuilder()
     .setColor(color)
     .setAuthor({
-      name: `${meta.badge} ${meta.name}  ·  @${handle}`,
+      name: `${meta.badge}  ${meta.name}  ·  @${handle}`,
       url: profileUrl,
       iconURL: iconUrl,
     })
-    .setTitle(`${typeInfo.icon}  New ${typeInfo.label}`)
+    .setTitle(`${postIcon}  New ${postType} from @${handle}`)
     .setURL(tweetUrl)
     .setDescription(bodyText.slice(0, 4096))
     .addFields(
       {
         name: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        value: `❤️  **${likes}** Likes   ·   🔁  **${reposts}** Reposts   ·   💬  **${replies}** Replies`,
-        inline: false,
-      },
-      {
-        name: "🕐  Published",
-        value: dateFormatted,
+        value: `🕐  **${dateFormatted}**`,
         inline: false,
       },
       {
@@ -129,105 +167,17 @@ function buildEmbed(tweet, handle) {
     )
     .setTimestamp(postDate)
     .setFooter({
-      text: `N.I.F. Private News Service  ·  Powered by 𝕏 Twitter/X`,
+      text: "N.I.F. Private News Service  ·  𝕏 Twitter/X",
       iconURL: "https://abs.twimg.com/favicons/twitter.3.ico",
     });
 
-  // Attach media
-  const mediaUrl = tweet.images[0] || tweet.gif || tweet.videoPoster;
-  if (mediaUrl) embed.setImage(mediaUrl);
-
-  // Additional images
-  if (tweet.images.length > 1) {
-    embed.addFields({
-      name: `🖼️  ${tweet.images.length} Images Attached`,
-      value: tweet.images.slice(1, 4).map((_, i) => `[Image ${i + 2}](${tweetUrl})`).join("   ·   "),
-      inline: false,
-    });
-  }
+  if (tweet.image) embed.setImage(tweet.image);
 
   return embed;
 }
 
-async function launchBrowser() {
-  console.log("🚀 Launching browser...");
-  const browser = await chromium.launch({
-    headless: true, chromiumSandbox: false,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-  });
-  const context = await browser.newContext({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", viewport: { width: 1280, height: 800 }, locale: "en-US" }); const page = await context.newPage();
-  await page.setExtraHTTPHeaders({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-  });
-  console.log("✅ Browser ready");
-  return { browser, page };
-}
-
-async function fetchTweets(page, handle) {
-  try {
-    await page.goto(`https://x.com/${handle}`, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await sleep(3000);
-    await page.evaluate(() => window.scrollBy(0, 500));
-    await sleep(1000);
-
-    const tweets = await page.evaluate(() => {
-      const results = [];
-      const articles = document.querySelectorAll('article[data-testid="tweet"]');
-      for (const article of articles) {
-        try {
-          const textEl = article.querySelector('[data-testid="tweetText"]');
-          const text = textEl ? textEl.innerText : "";
-          const timeEl = article.querySelector("time");
-          const linkEl = timeEl ? timeEl.closest("a") : null;
-          const href = linkEl ? linkEl.href : "";
-          const idMatch = href.match(/status\/(\d+)/);
-          const id = idMatch ? idMatch[1] : null;
-          const date = timeEl ? timeEl.getAttribute("datetime") : null;
-
-          const images = [];
-          article.querySelectorAll('[data-testid="tweetPhoto"] img').forEach(img => {
-            if (img.src && !img.src.includes("profile")) images.push(img.src);
-          });
-
-          const gifEl = article.querySelector('[data-testid="tweetGif"] img') ||
-                        article.querySelector('[data-testid="tweetGif"] video');
-          const gif = gifEl ? (gifEl.src || gifEl.poster) : null;
-          const videoEl = article.querySelector('video');
-          const hasVideo = !!videoEl;
-          const videoPoster = videoEl ? videoEl.poster : null;
-
-          const likeEl    = article.querySelector('[data-testid="like"] span');
-          const rtEl      = article.querySelector('[data-testid="retweet"] span');
-          const replyEl   = article.querySelector('[data-testid="reply"] span');
-          const socialCtx = article.querySelector('[data-testid="socialContext"]');
-          const isRepost  = socialCtx ? socialCtx.innerText.toLowerCase().includes("repost") : false;
-          const isReply   = text.startsWith("@");
-
-          if (id) {
-            results.push({
-              id, text, href, date, images, gif, hasVideo, videoPoster,
-              isRepost, isReply,
-              likes:    likeEl  ? likeEl.innerText  : "0",
-              retweets: rtEl    ? rtEl.innerText    : "0",
-              replies:  replyEl ? replyEl.innerText : "0",
-            });
-          }
-        } catch (e) {}
-      }
-      return results;
-    });
-
-    console.log(`[${handle}] Found ${tweets.length} posts`);
-    return tweets;
-  } catch (err) {
-    console.error(`[${handle}] Error: ${err.message}`);
-    return [];
-  }
-}
-
 async function main() {
   const seen = loadSeen();
-  const { browser, page } = await launchBrowser();
 
   const discord = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
@@ -242,17 +192,17 @@ async function main() {
   let totalPosted = 0;
 
   for (const handle of CONFIG.WATCH_ACCOUNTS) {
-    const tweets = await fetchTweets(page, handle);
-    if (!tweets.length) { await sleep(3000); continue; }
+    const tweets = await fetchFromNitter(handle);
+    if (!tweets.length) { await sleep(2000); continue; }
 
     if (!seen[handle]) {
       seen[handle] = tweets.map(t => t.id);
       console.log(`[${handle}] First run — seeded ${seen[handle].length}`);
-      await sleep(3000);
+      await sleep(2000);
       continue;
     }
 
-    const seenSet   = new Set(seen[handle]);
+    const seenSet = new Set(seen[handle]);
     const newTweets = tweets.filter(t => !seenSet.has(t.id));
 
     if (newTweets.length === 0) {
@@ -273,12 +223,11 @@ async function main() {
       seen[handle] = seen[handle].slice(0, 50);
     }
 
-    await sleep(3000);
+    await sleep(2000);
   }
 
   saveSeen(seen);
   console.log(`\n✅ Done! Posted ${totalPosted} new posts.`);
-  await browser.close();
   discord.destroy();
   process.exit(0);
 }
