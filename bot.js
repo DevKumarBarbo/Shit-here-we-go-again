@@ -1,15 +1,10 @@
-const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 const fs = require("fs");
 
-// Force exit after 4 minutes no matter what
-setTimeout(() => {
-  console.log("⏰ Force exit after 4 minutes");
-  process.exit(0);
-}, 4 * 60 * 1000);
+// Force exit after 4 minutes
+setTimeout(() => { console.log("Force exit"); process.exit(0); }, 4 * 60 * 1000);
 
 const CONFIG = {
-  DISCORD_TOKEN: process.env.DISCORD_TOKEN,
-  NEWS_CHANNEL_ID: process.env.NEWS_CHANNEL_ID,
+  DISCORD_WEBHOOK: process.env.DISCORD_WEBHOOK,
   WATCH_ACCOUNTS: ["elonmusk", "NASA", "NVIDIAGeForce", "Intel", "Google", "YouTube", "HINDU_KlNG"],
   SEEN_FILE: "seen_ids.json",
   NITTER_INSTANCES: [
@@ -21,13 +16,13 @@ const CONFIG = {
 };
 
 const ACCOUNT_META = {
-  elonmusk:      { name: "Elon Musk",      color: 0xe8e8e8, badge: "👤" },
-  NASA:          { name: "NASA",            color: 0x0b3d91, badge: "🚀" },
-  NVIDIAGeForce: { name: "NVIDIA GeForce", color: 0x76b900, badge: "🎮" },
-  Intel:         { name: "Intel",           color: 0x0071c5, badge: "💻" },
-  Google:        { name: "Google",          color: 0x4285f4, badge: "🔍" },
-  YouTube:       { name: "YouTube",         color: 0xff0000, badge: "▶️" },
-  HINDU_KlNG:    { name: "HINDU KlNG",     color: 0xff6600, badge: "👑" },
+  elonmusk:      { name: "Elon Musk",      color: 15658734, badge: "👤" },
+  NASA:          { name: "NASA",            color: 742801,   badge: "🚀" },
+  NVIDIAGeForce: { name: "NVIDIA GeForce", color: 7774464,  badge: "🎮" },
+  Intel:         { name: "Intel",           color: 29125,    badge: "💻" },
+  Google:        { name: "Google",          color: 4359668,  badge: "🔍" },
+  YouTube:       { name: "YouTube",         color: 16711680, badge: "▶️" },
+  HINDU_KlNG:    { name: "HINDU KlNG",     color: 16737280, badge: "👑" },
 };
 
 function loadSeen() {
@@ -46,16 +41,25 @@ async function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+async function sendWebhook(embed) {
+  const res = await fetch(CONFIG.DISCORD_WEBHOOK, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ embeds: [embed] }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`Webhook error ${res.status}: ${await res.text()}`);
+}
+
 async function fetchFromNitter(handle) {
   for (const instance of CONFIG.NITTER_INSTANCES) {
     try {
       console.log(`[${handle}] Trying ${instance}...`);
-      const url = `${instance}/${handle}/rss`;
-      const res = await fetch(url, {
+      const res = await fetch(`${instance}/${handle}/rss`, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS reader)" },
         signal: AbortSignal.timeout(8000),
       });
-      if (!res.ok) { console.log(`[${handle}] ${instance} returned ${res.status}`); continue; }
+      if (!res.ok) continue;
       const xml = await res.text();
       const items = [];
       const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g);
@@ -86,19 +90,18 @@ async function fetchFromNitter(handle) {
         return items;
       }
     } catch (err) {
-      console.log(`[${handle}] ${instance} error: ${err.message}`);
+      console.log(`[${handle}] Failed: ${err.message}`);
     }
   }
-  console.log(`[${handle}] ❌ All instances failed`);
   return [];
 }
 
 function buildEmbed(tweet, handle) {
-  const meta = ACCOUNT_META[handle] || { name: `@${handle}`, color: 0x14171a, badge: "📢" };
+  const meta = ACCOUNT_META[handle] || { name: `@${handle}`, color: 1316135, badge: "📢" };
   let postType, postIcon, color;
-  if (tweet.isRetweet)    { postType = "Repost"; postIcon = "🔁"; color = 0x00c853; }
-  else if (tweet.isReply) { postType = "Reply";  postIcon = "💬"; color = 0x1d9bf0; }
-  else if (tweet.image)   { postType = "Photo";  postIcon = "🖼️"; color = 0xff6f00; }
+  if (tweet.isRetweet)    { postType = "Repost"; postIcon = "🔁"; color = 52307;    }
+  else if (tweet.isReply) { postType = "Reply";  postIcon = "💬"; color = 1940463;  }
+  else if (tweet.image)   { postType = "Photo";  postIcon = "🖼️"; color = 16740096; }
   else                    { postType = "Post";   postIcon = "✍️"; color = meta.color; }
 
   const tweetUrl = tweet.link;
@@ -109,63 +112,51 @@ function buildEmbed(tweet, handle) {
     hour: "2-digit", minute: "2-digit", timeZone: "UTC", timeZoneName: "short",
   });
 
-  const embed = new EmbedBuilder()
-    .setColor(color)
-    .setAuthor({
+  const embed = {
+    color,
+    author: {
       name: `${meta.badge}  ${meta.name}  ·  @${handle}`,
       url: profileUrl,
-      iconURL: `https://unavatar.io/twitter/${handle}`,
-    })
-    .setTitle(`${postIcon}  New ${postType} from @${handle}`)
-    .setURL(tweetUrl)
-    .setDescription(tweet.text.length > 0 ? tweet.text.slice(0, 4096) : "*Media only post*")
-    .addFields(
+      icon_url: `https://unavatar.io/twitter/${handle}`,
+    },
+    title: `${postIcon}  New ${postType} from @${handle}`,
+    url: tweetUrl,
+    description: tweet.text.length > 0 ? tweet.text.slice(0, 4096) : "*Media only post*",
+    fields: [
       { name: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", value: `🕐  **${dateFormatted}**`, inline: false },
       { name: "🔗  View Post", value: `**[→ Open on X](${tweetUrl})**`, inline: true },
       { name: "👤  Profile",   value: `**[→ @${handle}](${profileUrl})**`, inline: true },
-    )
-    .setTimestamp(postDate)
-    .setFooter({
+    ],
+    timestamp: postDate.toISOString(),
+    footer: {
       text: "N.I.F. Private News Service  ·  𝕏 Twitter/X",
-      iconURL: "https://abs.twimg.com/favicons/twitter.3.ico",
-    });
+      icon_url: "https://abs.twimg.com/favicons/twitter.3.ico",
+    },
+  };
 
-  if (tweet.image) embed.setImage(tweet.image);
+  if (tweet.image) embed.image = { url: tweet.image };
   return embed;
 }
 
 async function main() {
   console.log("🤖 Bot starting...");
-  console.log(`📡 Token exists: ${!!CONFIG.DISCORD_TOKEN}`);
-  console.log(`📡 Channel ID exists: ${!!CONFIG.NEWS_CHANNEL_ID}`);
+  console.log(`Webhook: ${CONFIG.DISCORD_WEBHOOK ? "✅" : "❌ MISSING"}`);
 
-  const seen = loadSeen();
-
-  // Connect to Discord with timeout
-  const discord = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
-  });
-
-  console.log("🔌 Connecting to Discord...");
-
-  await Promise.race([
-    new Promise(resolve => discord.once("clientReady", resolve)),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("Discord timeout")), 30000)),
-  ]).catch(err => {
-    console.error("❌ Discord connection failed:", err.message);
-    process.exit(1);
-  });
-
-  console.log(`✅ Discord connected: ${discord.user.tag}`);
-
-  const channel = await discord.channels.fetch(CONFIG.NEWS_CHANNEL_ID).catch(() => null);
-  if (!channel) {
-    console.error("❌ Channel not found — check NEWS_CHANNEL_ID secret");
+  // Test webhook
+  try {
+    await sendWebhook({
+      color: 0x00c853,
+      title: "✅ N.I.F. News Bot Online",
+      description: "Bot is running and checking for new posts...",
+      timestamp: new Date().toISOString(),
+    });
+    console.log("✅ Webhook works!");
+  } catch (err) {
+    console.error(`❌ Webhook failed: ${err.message}`);
     process.exit(1);
   }
 
-  console.log(`✅ Channel found: #${channel.name}`);
-
+  const seen = loadSeen();
   let totalPosted = 0;
 
   for (const handle of CONFIG.WATCH_ACCOUNTS) {
@@ -187,33 +178,23 @@ async function main() {
     } else {
       for (const tweet of [...newTweets].reverse()) {
         try {
-          await channel.send({ embeds: [buildEmbed(tweet, handle)] });
+          await sendWebhook(buildEmbed(tweet, handle));
           seen[handle].unshift(tweet.id);
           totalPosted++;
           console.log(`[${handle}] ✅ Posted: ${tweet.text.slice(0, 60)}`);
           await sleep(500);
         } catch (err) {
-          console.error(`[${handle}] Send error: ${err.message}`);
+          console.error(`[${handle}] Error: ${err.message}`);
         }
       }
       seen[handle] = seen[handle].slice(0, 50);
     }
-
     await sleep(1000);
   }
 
   saveSeen(seen);
-  console.log(`\n✅ Done! Posted ${totalPosted} new posts.`);
-  discord.destroy();
+  console.log(`✅ Done! Posted ${totalPosted} new posts.`);
   process.exit(0);
 }
 
-// Start Discord and run main
-const discord = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
-});
-discord.once("clientReady", () => main());
-discord.login(CONFIG.DISCORD_TOKEN).catch(err => {
-  console.error("❌ Discord login failed:", err.message);
-  process.exit(1);
-});
+main();

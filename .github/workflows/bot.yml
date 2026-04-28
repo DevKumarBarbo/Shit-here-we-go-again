@@ -1,41 +1,29 @@
 name: X News Bot
-
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Restore seen IDs cache
+      - uses: actions/checkout@v4
+      - name: Restore cache
         uses: actions/cache@v4
         with:
           path: seen_ids.json
           key: seen-ids-${{ github.run_id }}
           restore-keys: seen-ids-
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Install dependencies
-        run: npm install
-
+      - run: npm install
       - name: Run bot
         run: node bot.js
         env:
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
-          NEWS_CHANNEL_ID: ${{ secrets.NEWS_CHANNEL_ID }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         timeout-minutes: 5
-
-      - name: Save seen IDs
+      - name: Save cache
         uses: actions/cache/save@v4
         if: always()
         with:
