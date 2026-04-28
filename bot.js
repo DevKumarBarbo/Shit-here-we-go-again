@@ -1,18 +1,11 @@
 const fs = require("fs");
 
-// Force exit after 4 minutes
 setTimeout(() => { console.log("Force exit"); process.exit(0); }, 4 * 60 * 1000);
 
 const CONFIG = {
   DISCORD_WEBHOOK: process.env.DISCORD_WEBHOOK,
   WATCH_ACCOUNTS: ["elonmusk", "NASA", "NVIDIAGeForce", "Intel", "Google", "YouTube", "HINDU_KlNG"],
   SEEN_FILE: "seen_ids.json",
-  NITTER_INSTANCES: [
-    "https://nitter.net",
-    "https://nitter.privacydev.net",
-    "https://nitter.poast.org",
-    "https://nitter.1d4.us",
-  ],
 };
 
 const ACCOUNT_META = {
@@ -48,52 +41,85 @@ async function sendWebhook(embed) {
     body: JSON.stringify({ embeds: [embed] }),
     signal: AbortSignal.timeout(10000),
   });
-  if (!res.ok) throw new Error(`Webhook error ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`Webhook ${res.status}: ${await res.text()}`);
 }
 
-async function fetchFromNitter(handle) {
-  for (const instance of CONFIG.NITTER_INSTANCES) {
-    try {
-      console.log(`[${handle}] Trying ${instance}...`);
-      const res = await fetch(`${instance}/${handle}/rss`, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS reader)" },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) continue;
-      const xml = await res.text();
-      const items = [];
-      const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g);
-      for (const match of itemMatches) {
-        const item = match[1];
-        const title = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] || "";
-        const link = item.match(/<link>(.*?)<\/link>/)?.[1] || "";
-        const pubDate = item.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || "";
-        const desc = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1] || "";
-        const idMatch = link.match(/status\/(\d+)/);
-        if (!idMatch) continue;
-        const id = idMatch[1];
-        const imgMatch = desc.match(/<img[^>]+src="([^"]+)"/);
-        const image = imgMatch && imgMatch[1].startsWith("http") ? imgMatch[1] : null;
-        const cleanText = title.replace(/^R to @\w+: /, "").replace(/^RT by @\w+: /, "").trim();
-        items.push({
-          id,
-          text: cleanText,
-          link: `https://x.com/${handle}/status/${id}`,
-          date: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
-          image,
-          isRetweet: title.startsWith("RT by"),
-          isReply: title.startsWith("R to"),
-        });
-      }
-      if (items.length > 0) {
-        console.log(`[${handle}] ✅ Got ${items.length} posts`);
-        return items;
-      }
-    } catch (err) {
-      console.log(`[${handle}] Failed: ${err.message}`);
+async function fetchTweets(handle) {
+  try {
+    // Use Twitter's own syndication API - no auth needed for public accounts
+    const url = `https://syndication.twitter.com/srv/timeline-profile/screen-name/${handle}?showReplies=false`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      console.log(`[${handle}] Syndication returned ${res.status}`);
+      return await fetchFromFxTwitter(handle);
     }
+
+    const data = await res.json();
+    const entries = data?.timeline?.entries || [];
+    const tweets = [];
+
+    for (const entry of entries) {
+      const tweet = entry?.content?.tweet;
+      if (!tweet || !tweet.id_str) continue;
+      const text = tweet.full_text || tweet.text || "";
+      const media = tweet.entities?.media?.[0]?.media_url_https || null;
+      tweets.push({
+        id: tweet.id_str,
+        text: text.replace(/https:\/\/t\.co\/\S+/g, "").trim(),
+        link: `https://x.com/${handle}/status/${tweet.id_str}`,
+        date: tweet.created_at ? new Date(tweet.created_at).toISOString() : new Date().toISOString(),
+        image: media,
+        likes: tweet.favorite_count || 0,
+        retweets: tweet.retweet_count || 0,
+        replies: tweet.reply_count || 0,
+        isRetweet: !!tweet.retweeted_status,
+        isReply: !!tweet.in_reply_to_status_id_str,
+      });
+    }
+
+    if (tweets.length > 0) {
+      console.log(`[${handle}] ✅ Got ${tweets.length} tweets from syndication`);
+      return tweets;
+    }
+
+    return await fetchFromFxTwitter(handle);
+  } catch (err) {
+    console.log(`[${handle}] Syndication failed: ${err.message}`);
+    return await fetchFromFxTwitter(handle);
   }
-  return [];
+}
+
+// Fallback: use fxtwitter which mirrors public tweets
+async function fetchFromFxTwitter(handle) {
+  try {
+    // fxtwitter has a public API for individual tweets
+    // We get the user's latest tweet ID from their profile page
+    const res = await fetch(`https://api.fxtwitter.com/${handle}`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    console.log(`[${handle}] fxtwitter response:`, JSON.stringify(data).slice(0, 200));
+    return [];
+  } catch (err) {
+    console.log(`[${handle}] fxtwitter failed: ${err.message}`);
+    return [];
+  }
+}
+
+function formatNum(n) {
+  if (!n) return "0";
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+  return String(n);
 }
 
 function buildEmbed(tweet, handle) {
@@ -123,7 +149,12 @@ function buildEmbed(tweet, handle) {
     url: tweetUrl,
     description: tweet.text.length > 0 ? tweet.text.slice(0, 4096) : "*Media only post*",
     fields: [
-      { name: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", value: `🕐  **${dateFormatted}**`, inline: false },
+      {
+        name: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        value: `❤️ **${formatNum(tweet.likes)}**  ·  🔁 **${formatNum(tweet.retweets)}**  ·  💬 **${formatNum(tweet.replies)}**`,
+        inline: false,
+      },
+      { name: "🕐  Published", value: `**${dateFormatted}**`, inline: false },
       { name: "🔗  View Post", value: `**[→ Open on X](${tweetUrl})**`, inline: true },
       { name: "👤  Profile",   value: `**[→ @${handle}](${profileUrl})**`, inline: true },
     ],
@@ -140,15 +171,15 @@ function buildEmbed(tweet, handle) {
 
 async function main() {
   console.log("🤖 Bot starting...");
-  console.log(`Webhook: ${CONFIG.DISCORD_WEBHOOK ? "✅" : "❌ MISSING"}`);
 
   // Test webhook
   try {
     await sendWebhook({
       color: 0x00c853,
-      title: "✅ N.I.F. News Bot Online",
-      description: "Bot is running and checking for new posts...",
+      title: "🤖 N.I.F. News Bot — Run Started",
+      description: "Checking for new posts from watched accounts...",
       timestamp: new Date().toISOString(),
+      footer: { text: "N.I.F. Private News Service" },
     });
     console.log("✅ Webhook works!");
   } catch (err) {
@@ -160,7 +191,7 @@ async function main() {
   let totalPosted = 0;
 
   for (const handle of CONFIG.WATCH_ACCOUNTS) {
-    const tweets = await fetchFromNitter(handle);
+    const tweets = await fetchTweets(handle);
     if (!tweets.length) { await sleep(1000); continue; }
 
     if (!seen[handle]) {
