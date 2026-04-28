@@ -44,75 +44,92 @@ async function sendWebhook(embed) {
   if (!res.ok) throw new Error(`Webhook ${res.status}: ${await res.text()}`);
 }
 
+// Get user's latest tweet IDs from their RSS feed via rsshub public instance
 async function fetchTweets(handle) {
-  try {
-    // Use Twitter's own syndication API - no auth needed for public accounts
-    const url = `https://syndication.twitter.com/srv/timeline-profile/screen-name/${handle}?showReplies=false`;
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json",
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!res.ok) {
-      console.log(`[${handle}] Syndication returned ${res.status}`);
-      return await fetchFromFxTwitter(handle);
-    }
-
-    const data = await res.json();
-    const entries = data?.timeline?.entries || [];
-    const tweets = [];
-
-    for (const entry of entries) {
-      const tweet = entry?.content?.tweet;
-      if (!tweet || !tweet.id_str) continue;
-      const text = tweet.full_text || tweet.text || "";
-      const media = tweet.entities?.media?.[0]?.media_url_https || null;
-      tweets.push({
-        id: tweet.id_str,
-        text: text.replace(/https:\/\/t\.co\/\S+/g, "").trim(),
-        link: `https://x.com/${handle}/status/${tweet.id_str}`,
-        date: tweet.created_at ? new Date(tweet.created_at).toISOString() : new Date().toISOString(),
-        image: media,
-        likes: tweet.favorite_count || 0,
-        retweets: tweet.retweet_count || 0,
-        replies: tweet.reply_count || 0,
-        isRetweet: !!tweet.retweeted_status,
-        isReply: !!tweet.in_reply_to_status_id_str,
+  const sources = [
+    // fxtwitter user timeline (undocumented but works)
+    async () => {
+      const r = await fetch(`https://api.fxtwitter.com/${handle}/rss`, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(8000),
       });
-    }
+      if (!r.ok) throw new Error(`${r.status}`);
+      const xml = await r.text();
+      return parseRSS(xml, handle);
+    },
+    // twiiit RSS mirror
+    async () => {
+      const r = await fetch(`https://twiiit.com/${handle}/rss`, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) throw new Error(`${r.status}`);
+      const xml = await r.text();
+      return parseRSS(xml, handle);
+    },
+    // xcancel RSS mirror
+    async () => {
+      const r = await fetch(`https://xcancel.com/${handle}/rss`, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) throw new Error(`${r.status}`);
+      const xml = await r.text();
+      return parseRSS(xml, handle);
+    },
+  ];
 
-    if (tweets.length > 0) {
-      console.log(`[${handle}] ✅ Got ${tweets.length} tweets from syndication`);
-      return tweets;
+  for (const source of sources) {
+    try {
+      const tweets = await source();
+      if (tweets.length > 0) {
+        console.log(`[${handle}] ✅ Got ${tweets.length} tweets`);
+        return tweets;
+      }
+    } catch (err) {
+      console.log(`[${handle}] Source failed: ${err.message}`);
     }
-
-    return await fetchFromFxTwitter(handle);
-  } catch (err) {
-    console.log(`[${handle}] Syndication failed: ${err.message}`);
-    return await fetchFromFxTwitter(handle);
   }
+
+  console.log(`[${handle}] ❌ All sources failed`);
+  return [];
 }
 
-// Fallback: use fxtwitter which mirrors public tweets
-async function fetchFromFxTwitter(handle) {
-  try {
-    // fxtwitter has a public API for individual tweets
-    // We get the user's latest tweet ID from their profile page
-    const res = await fetch(`https://api.fxtwitter.com/${handle}/tweets`, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      signal: AbortSignal.timeout(10000),
+function parseRSS(xml, handle) {
+  const items = [];
+  const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g);
+  for (const match of itemMatches) {
+    const item = match[1];
+    const title = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] ||
+                  item.match(/<title>(.*?)<\/title>/)?.[1] || "";
+    const link = item.match(/<link>(.*?)<\/link>/)?.[1] || "";
+    const pubDate = item.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || "";
+    const desc = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1] || "";
+    const idMatch = link.match(/status\/(\d+)/);
+    if (!idMatch) continue;
+    const id = idMatch[1];
+    const imgMatch = desc.match(/<img[^>]+src="([^"]+)"/);
+    const image = imgMatch && imgMatch[1].startsWith("http") ? imgMatch[1] : null;
+    const cleanText = title
+      .replace(/^R to @\w+: /, "")
+      .replace(/^RT by @\w+: /, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .trim();
+    items.push({
+      id,
+      text: cleanText,
+      link: `https://x.com/${handle}/status/${id}`,
+      date: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
+      image,
+      isRetweet: title.startsWith("RT by"),
+      isReply: title.startsWith("R to"),
+      likes: 0, retweets: 0, replies: 0,
     });
-    if (!res.ok) return [];
-    const data = await res.json();
-    console.log(`[${handle}] fxtwitter response:`, JSON.stringify(data).slice(0, 200));
-    return [];
-  } catch (err) {
-    console.log(`[${handle}] fxtwitter failed: ${err.message}`);
-    return [];
   }
+  return items;
 }
 
 function formatNum(n) {
@@ -132,7 +149,7 @@ function buildEmbed(tweet, handle) {
 
   const tweetUrl = tweet.link;
   const profileUrl = `https://x.com/${handle}`;
-  const postDate = tweet.date ? new Date(tweet.date) : new Date();
+  const postDate = new Date(tweet.date);
   const dateFormatted = postDate.toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
     hour: "2-digit", minute: "2-digit", timeZone: "UTC", timeZoneName: "short",
@@ -149,12 +166,7 @@ function buildEmbed(tweet, handle) {
     url: tweetUrl,
     description: tweet.text.length > 0 ? tweet.text.slice(0, 4096) : "*Media only post*",
     fields: [
-      {
-        name: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        value: `❤️ **${formatNum(tweet.likes)}**  ·  🔁 **${formatNum(tweet.retweets)}**  ·  💬 **${formatNum(tweet.replies)}**`,
-        inline: false,
-      },
-      { name: "🕐  Published", value: `**${dateFormatted}**`, inline: false },
+      { name: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", value: `🕐  **${dateFormatted}**`, inline: false },
       { name: "🔗  View Post", value: `**[→ Open on X](${tweetUrl})**`, inline: true },
       { name: "👤  Profile",   value: `**[→ @${handle}](${profileUrl})**`, inline: true },
     ],
@@ -172,12 +184,11 @@ function buildEmbed(tweet, handle) {
 async function main() {
   console.log("🤖 Bot starting...");
 
-  // Test webhook
   try {
     await sendWebhook({
       color: 0x00c853,
-      title: "🤖 N.I.F. News Bot — Run Started",
-      description: "Checking for new posts from watched accounts...",
+      title: "🤖 N.I.F. News Bot — Checking for posts...",
+      description: "Scanning watched accounts for new content.",
       timestamp: new Date().toISOString(),
       footer: { text: "N.I.F. Private News Service" },
     });
@@ -192,12 +203,12 @@ async function main() {
 
   for (const handle of CONFIG.WATCH_ACCOUNTS) {
     const tweets = await fetchTweets(handle);
-    if (!tweets.length) { await sleep(1000); continue; }
+    if (!tweets.length) { await sleep(500); continue; }
 
     if (!seen[handle]) {
       seen[handle] = tweets.map(t => t.id);
       console.log(`[${handle}] First run — seeded ${seen[handle].length}`);
-      await sleep(1000);
+      await sleep(500);
       continue;
     }
 
@@ -220,7 +231,7 @@ async function main() {
       }
       seen[handle] = seen[handle].slice(0, 50);
     }
-    await sleep(1000);
+    await sleep(500);
   }
 
   saveSeen(seen);
@@ -229,3 +240,4 @@ async function main() {
 }
 
 main();
+L
