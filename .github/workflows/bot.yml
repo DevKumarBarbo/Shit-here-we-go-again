@@ -8,8 +8,6 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout repo
@@ -33,8 +31,7 @@ jobs:
       - name: Run bot
         run: node bot.js
         env:
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN
-}}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           NEWS_CHANNEL_ID: ${{ secrets.NEWS_CHANNEL_ID }}
         timeout-minutes: 5
 
