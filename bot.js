@@ -152,10 +152,10 @@ function buildEmbed(tweet, handle) {
 async function launchBrowser() {
   console.log("🚀 Launching browser...");
   const browser = await chromium.launch({
-    headless: true,
+    headless: true, chromiumSandbox: false,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
   });
-  const page = await browser.newPage();
+  const context = await browser.newContext({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", viewport: { width: 1280, height: 800 }, locale: "en-US" }); const page = await context.newPage();
   await page.setExtraHTTPHeaders({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
   });
